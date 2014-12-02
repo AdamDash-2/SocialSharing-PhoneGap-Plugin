@@ -2,8 +2,6 @@
 #import <Cordova/CDV.h>
 #import <Social/Social.h>
 #import <Foundation/NSException.h>
-#import <MessageUI/MFMessageComposeViewController.h>
-#import <MessageUI/MFMailComposeViewController.h>
 #import <MobileCoreServices/MobileCoreServices.h>
 
 @implementation SocialSharing {
@@ -11,9 +9,6 @@
 }
 
 - (void)pluginInitialize {
-  if ([self isEmailAvailable]) {
-    [self cycleTheGlobalMailComposer];
-  }
 }
 
 - (void)available:(CDVInvokedUrlCommand*)command {
@@ -138,38 +133,6 @@
   [self shareViaInternal:command type:[command.arguments objectAtIndex:4]];
 }
 
-- (void)canShareVia:(CDVInvokedUrlCommand*)command {
-  NSString *via = [command.arguments objectAtIndex:4];
-  CDVPluginResult * pluginResult;
-  if ([@"sms" caseInsensitiveCompare:via] == NSOrderedSame && [self canShareViaSMS]) {
-    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
-  } else if ([@"email" caseInsensitiveCompare:via] == NSOrderedSame && [self isEmailAvailable]) {
-    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
-  } else if ([@"whatsapp" caseInsensitiveCompare:via] == NSOrderedSame && [self canShareViaWhatsApp]) {
-    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
-  } else if ([self isAvailableForSharing:command type:via]) {
-    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
-  } else {
-    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"not available"];
-  }
-  [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
-}
-
-- (void)canShareViaEmail:(CDVInvokedUrlCommand*)command {
-  if ([self isEmailAvailable]) {
-    CDVPluginResult * pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
-    [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
-  } else {
-    CDVPluginResult * pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"not available"];
-    [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
-  }
-}
-
-- (bool)isEmailAvailable {
-  Class messageClass = (NSClassFromString(@"MFMailComposeViewController"));
-  return messageClass != nil && [messageClass canSendMail];
-}
-
 - (bool)isAvailableForSharing:(CDVInvokedUrlCommand*)command
                          type:(NSString *) type {
   // wrapped in try-catch, because isAvailableForServiceType may crash if an invalid type is passed
@@ -221,81 +184,6 @@
   }];
 }
 
-- (void)shareViaEmail:(CDVInvokedUrlCommand*)command {
-  if ([self isEmailAvailable]) {
-    
-    if (TARGET_IPHONE_SIMULATOR && IsAtLeastiOSVersion(@"8.0")) {
-      UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"SocialSharing plugin"
-                                                      message:@"Sharing via email is not supported on the iOS 8 simulator."
-                                                     delegate:nil
-                                            cancelButtonTitle:@"OK"
-                                            otherButtonTitles:nil];
-      [alert show];
-      return;
-    }
-    
-    self.globalMailComposer.mailComposeDelegate = self;
-    
-    if ([command.arguments objectAtIndex:0] != (id)[NSNull null]) {
-      NSString *message = [command.arguments objectAtIndex:0];
-      BOOL isHTML = [message rangeOfString:@"<[^>]+>" options:NSRegularExpressionSearch].location != NSNotFound;
-      [self.globalMailComposer setMessageBody:message isHTML:isHTML];
-    }
-    
-    if ([command.arguments objectAtIndex:1] != (id)[NSNull null]) {
-      [self.globalMailComposer setSubject: [command.arguments objectAtIndex:1]];
-    }
-    
-    if ([command.arguments objectAtIndex:2] != (id)[NSNull null]) {
-      [self.globalMailComposer setToRecipients:[command.arguments objectAtIndex:2]];
-    }
-    
-    if ([command.arguments objectAtIndex:3] != (id)[NSNull null]) {
-      [self.globalMailComposer setCcRecipients:[command.arguments objectAtIndex:3]];
-    }
-    
-    if ([command.arguments objectAtIndex:4] != (id)[NSNull null]) {
-      [self.globalMailComposer setBccRecipients:[command.arguments objectAtIndex:4]];
-    }
-    
-    if ([command.arguments objectAtIndex:5] != (id)[NSNull null]) {
-      NSArray* attachments = [command.arguments objectAtIndex:5];
-      NSFileManager* fileManager = [NSFileManager defaultManager];
-      for (NSString* path in attachments) {
-        NSURL *file = [self getFile:path];
-        NSData* data = [fileManager contentsAtPath:file.path];
-        
-        NSString* fileName;
-        NSString* mimeType;
-        NSString* basename = [self getBasenameFromAttachmentPath:path];
-
-        if ([basename hasPrefix:@"data:"]) {
-          mimeType = (NSString*)[[[basename substringFromIndex:5] componentsSeparatedByString: @";"] objectAtIndex:0];
-          fileName = @"attachment.";
-          fileName = [fileName stringByAppendingString:(NSString*)[[mimeType componentsSeparatedByString: @"/"] lastObject]];
-          NSString *base64content = (NSString*)[[basename componentsSeparatedByString: @","] lastObject];
-          data = [NSData dataFromBase64String:base64content];
-        } else {
-          fileName = [basename pathComponents].lastObject;
-          mimeType = [self getMimeTypeFromFileExtension:[basename pathExtension]];
-        }
-        [self.globalMailComposer addAttachmentData:data mimeType:mimeType fileName:fileName];
-      }
-    }
-    
-    // remember the command, because we need it in the didFinishWithResult method
-    _command = command;
-
-    [self.commandDelegate runInBackground:^{
-      [self.viewController presentViewController:self.globalMailComposer animated:YES completion:nil];
-    }];
-    
-  } else {
-    CDVPluginResult * pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"not available"];
-    [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
-  }
-}
-
 - (NSString*) getBasenameFromAttachmentPath:(NSString*)path {
   if ([path hasPrefix:@"base64:"]) {
     NSString* pathWithoutPrefix = [path stringByReplacingOccurrencesOfString:@"base64:" withString:@""];
@@ -316,78 +204,6 @@
   CFRelease(ext);
   CFRelease(type);
   return result;
-}
-
-/**
- * Delegate will be called after the mail composer did finish an action
- * to dismiss the view.
- */
-- (void) mailComposeController:(MFMailComposeViewController*)controller
-           didFinishWithResult:(MFMailComposeResult)result
-                         error:(NSError*)error {
-  bool ok = result == MFMailComposeResultSent;
-  [self.viewController dismissViewControllerAnimated:YES completion:^{[self cycleTheGlobalMailComposer];}];
-  CDVPluginResult * pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:ok];
-  [self.commandDelegate sendPluginResult:pluginResult callbackId:_command.callbackId];
-}
-
--(void)cycleTheGlobalMailComposer {
-  // we are cycling the damned GlobalMailComposer: http://stackoverflow.com/questions/25604552/i-have-real-misunderstanding-with-mfmailcomposeviewcontroller-in-swift-ios8-in/25604976#25604976
-  self.globalMailComposer = nil;
-  self.globalMailComposer = [[MFMailComposeViewController alloc] init];
-}
-
-- (bool)canShareViaSMS {
-  Class messageClass = (NSClassFromString(@"MFMessageComposeViewController"));
-  return messageClass != nil && [messageClass canSendText];
-}
-
-- (void)shareViaSMS:(CDVInvokedUrlCommand*)command {
-  if ([self canShareViaSMS]) {
-    NSDictionary* options = [command.arguments objectAtIndex:0];
-    NSString *phonenumbers = [command.arguments objectAtIndex:1];
-    NSString *message = [options objectForKey:@"message"];
-    NSString *subject = [options objectForKey:@"subject"];
-    NSString *image = [options objectForKey:@"image"];
-    
-    MFMessageComposeViewController *picker = [[MFMessageComposeViewController alloc] init];
-    picker.messageComposeDelegate = (id) self;
-    if (message != (id)[NSNull null]) {
-      picker.body = message;
-    }
-    if (subject != (id)[NSNull null]) {
-      [picker setSubject:subject];
-    }
-    if (image != nil && image != (id)[NSNull null]) {
-      BOOL canSendAttachments = [[MFMessageComposeViewController class] respondsToSelector:@selector(canSendAttachments)];
-      if (canSendAttachments) {
-        NSURL *file = [self getFile:image];
-        if (file != nil) {
-          [picker addAttachmentURL:file withAlternateFilename:nil];
-        }
-      }
-    }
-    
-    if (phonenumbers != (id)[NSNull null]) {
-      [picker setRecipients:[phonenumbers componentsSeparatedByString:@","]];
-    }
-    // remember the command, because we need it in the didFinishWithResult method
-    _command = command;
-    [self.commandDelegate runInBackground:^{
-      [self.viewController presentViewController:picker animated:YES completion:nil];
-    }];
-  } else {
-    CDVPluginResult * pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"not available"];
-    [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
-  }
-}
-
-// Dismisses the SMS composition interface when users taps Cancel or Send
-- (void)messageComposeViewController:(MFMessageComposeViewController *)controller didFinishWithResult:(MessageComposeResult)result {
-  bool ok = result == MessageComposeResultSent;
-  [self.viewController dismissViewControllerAnimated:YES completion:nil];
-  CDVPluginResult * pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:ok];
-  [self.commandDelegate sendPluginResult:pluginResult callbackId:_command.callbackId];
 }
 
 - (bool)canShareViaWhatsApp {
